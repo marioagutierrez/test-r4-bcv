@@ -94,7 +94,17 @@ const procesarDebitoInmediato = async (datos, otp) => {
         'Commerce': TOKEN_COMMERCE
       }
     });
-    console.log('Respuesta de DebitoInmediato:', response.data);
+    console.log('=== Respuesta Completa de MiBanco - Débito Inmediato ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', JSON.stringify(response.headers, null, 2));
+    console.log('Data:', JSON.stringify(response.data, null, 2));
+    console.log('Config:', JSON.stringify({
+      url: response.config.url,
+      method: response.config.method,
+      headers: response.config.headers
+    }, null, 2));
+    console.log('=== Fin Respuesta Completa ===');
     if (response.data.code === 'ACCP') {
       return { success: true, id: response.data.id, reference: response.data.reference };
     } else if (response.data.code === 'AC00') {
@@ -145,6 +155,110 @@ const verificarTransaccionPeriodicamente = async (id, maxIntentos = 12) => {
   return { success: false, timeout: true };
 };
 
+const solicitarDatosCredito = () => {
+  return new Promise((resolve) => {
+    console.log('\n=== Datos para Crédito Inmediato ===');
+    rl.question('Cédula (ej: V12345678): ', (cedula) => {
+      rl.question('Cuenta (20 dígitos): ', (cuenta) => {
+        rl.question('Monto (ej: 10.00): ', (monto) => {
+          rl.question('Concepto (ej: Prueba 854): ', (concepto) => {
+            resolve({
+              cedula: cedula.trim(),
+              cuenta: cuenta.trim(),
+              monto: monto.trim(),
+              concepto: concepto.trim()
+            });
+          });
+        });
+      });
+    });
+  });
+};
+
+const procesarCreditoInmediato = async (datos) => {
+  console.log('\n=== Procesando Crédito Inmediato ===');
+  const tokenData = `${datos.cedula}${datos.cuenta}${datos.monto}`;
+  const tokenAuthorization = generateHmacSha256(tokenData, TOKEN_COMMERCE);
+
+  try {
+    const response = await axios.post(`${BASE_URL}/CICuentas`, {
+      Cedula: datos.cedula,
+      Cuenta: datos.cuenta,
+      Monto: datos.monto,
+      Concepto: datos.concepto
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': tokenAuthorization,
+        'Commerce': TOKEN_COMMERCE
+      }
+    });
+    console.log('Respuesta de Crédito Inmediato:', response.data);
+    if (response.data.code === 'ACCP') {
+      return { success: true, reference: response.data.reference };
+    } else {
+      return { success: false };
+    }
+  } catch (error) {
+    console.error('Error al procesar crédito inmediato:', error.response?.data || error.message);
+    return { success: false };
+  }
+};
+
+const procesoCreditoInmediato = async () => {
+  try {
+    const datos = await solicitarDatosCredito();
+    console.log('\nDatos ingresados:', datos);
+    
+    const resultadoCredito = await procesarCreditoInmediato(datos);
+    if (resultadoCredito.success) {
+      console.log(`\n🎉 ¡Crédito inmediato completado exitosamente!`);
+      console.log(`Referencia: ${resultadoCredito.reference}`);
+    } else {
+      console.log('\n❌ Error en el proceso de crédito inmediato.');
+    }
+    rl.close();
+  } catch (error) {
+    console.error('Error en el proceso:', error);
+    rl.close();
+  }
+};
+
+const getToday = () => {
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const consultarTasaBcv = async () => {
+  console.log('\n=== Consulta de tasa BCV ===');
+  const tokenData = `${getToday()}USD`;
+  const tokenAuthorization = generateHmacSha256(tokenData, TOKEN_COMMERCE);
+
+  try {
+    const response = await axios.post(`${BASE_URL}/MBbcv`, {
+      Moneda: 'USD',
+      Fechavalor: getToday()
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': tokenAuthorization,
+        'Commerce': TOKEN_COMMERCE
+      }
+    });
+    console.log('Respuesta completa de la API:', response.data);
+  } catch (error) {
+    if (error.response) {
+      console.error('Error en la respuesta de la API:', error.response.data);
+    } else {
+      console.error('Error en la petición:', error.message);
+    }
+  }
+  rl.close();
+};
+
 const procesoDebitoInmediato = async () => {
   try {
     const datos = await solicitarDatos();
@@ -188,9 +302,15 @@ const procesoDebitoInmediato = async () => {
 const main = async () => {
   console.log('=== Sistema R4 Conecta ===');
   console.log('1. Proceso de Débito Inmediato');
-  rl.question('Seleccione una opción (1): ', async (opcion) => {
+  console.log('2. Proceso de Crédito Inmediato');
+  console.log('3. Consulta de tasa BCV');
+  rl.question('Seleccione una opción (1, 2 o 3): ', async (opcion) => {
     if (opcion.trim() === '1') {
       await procesoDebitoInmediato();
+    } else if (opcion.trim() === '2') {
+      await procesoCreditoInmediato();
+    } else if (opcion.trim() === '3') {
+      await consultarTasaBcv();
     } else {
       console.log('Opción no válida');
       rl.close();
