@@ -193,9 +193,21 @@ const procesarCreditoInmediato = async (datos) => {
         'Commerce': TOKEN_COMMERCE
       }
     });
-    console.log('Respuesta de Crédito Inmediato:', response.data);
+    console.log('=== Respuesta Completa de MiBanco - Crédito Inmediato ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', JSON.stringify(response.headers, null, 2));
+    console.log('Data:', JSON.stringify(response.data, null, 2));
+    console.log('Config:', JSON.stringify({
+      url: response.config.url,
+      method: response.config.method,
+      headers: response.config.headers
+    }, null, 2));
+    console.log('=== Fin Respuesta Completa ===');
     if (response.data.code === 'ACCP') {
       return { success: true, reference: response.data.reference };
+    } else if (response.data.code === 'AC00' && response.data.id) {
+      return { success: false, id: response.data.id, needsVerification: true };
     } else {
       return { success: false };
     }
@@ -209,15 +221,25 @@ const procesoCreditoInmediato = async () => {
   try {
     const datos = await solicitarDatosCredito();
     console.log('\nDatos ingresados:', datos);
-    
     const resultadoCredito = await procesarCreditoInmediato(datos);
     if (resultadoCredito.success) {
       console.log(`\n🎉 ¡Crédito inmediato completado exitosamente!`);
       console.log(`Referencia: ${resultadoCredito.reference}`);
+      rl.close();
+    } else if (resultadoCredito.needsVerification) {
+      console.log(`\n🔄 La transacción requiere verificación. ID: ${resultadoCredito.id}`);
+      const resultadoVerificacion = await verificarTransaccionPeriodicamente(resultadoCredito.id);
+      if (resultadoVerificacion.success) {
+        console.log(`\n🎉 ¡Crédito inmediato verificado y completado!`);
+        console.log(`Referencia: ${resultadoVerificacion.reference}`);
+      } else {
+        console.log('\n⏰ La transacción aún está en proceso después del tiempo de espera.');
+      }
+      rl.close();
     } else {
       console.log('\n❌ Error en el proceso de crédito inmediato.');
+      rl.close();
     }
-    rl.close();
   } catch (error) {
     console.error('Error en el proceso:', error);
     rl.close();
