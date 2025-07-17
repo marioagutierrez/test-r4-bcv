@@ -281,6 +281,103 @@ const consultarTasaBcv = async () => {
   rl.close();
 };
 
+const solicitarDatosC2P = () => {
+  return new Promise((resolve) => {
+    console.log('\n=== Datos para Cobro C2P ===');
+    rl.question('Teléfono Destino (ej: 04145555555): ', (telefonoDestino) => {
+      rl.question('Cédula (ej: V12345678): ', (cedula) => {
+        rl.question('Concepto (ej: PRUEBA): ', (concepto) => {
+          rl.question('Banco (ej: 0105): ', (banco) => {
+            rl.question('IP (ej: 192.168.1.20): ', (ip) => {
+              rl.question('Monto (ej: 1.15): ', (monto) => {
+                rl.question('OTP (ej: 13309525): ', (otp) => {
+                  resolve({
+                    telefonoDestino: telefonoDestino.trim(),
+                    cedula: cedula.trim(),
+                    concepto: concepto.trim(),
+                    banco: banco.trim(),
+                    ip: ip.trim(),
+                    monto: monto.trim(),
+                    otp: otp.trim()
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+};
+
+const procesarCobroC2P = async (datos) => {
+  console.log('\n=== Procesando Cobro C2P ===');
+  const tokenData = `${datos.telefonoDestino}${datos.monto}${datos.banco}${datos.cedula}`;
+  const tokenAuthorization = generateHmacSha256(tokenData, TOKEN_COMMERCE);
+
+  try {
+    const response = await axios.post(`${BASE_URL}/MBc2p`, {
+      TelefonoDestino: datos.telefonoDestino,
+      Cedula: datos.cedula,
+      Concepto: datos.concepto,
+      Banco: datos.banco,
+      Ip: datos.ip,
+      Monto: datos.monto,
+      Otp: datos.otp
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': tokenAuthorization,
+        'Commerce': TOKEN_COMMERCE
+      }
+    });
+    console.log('=== Respuesta Completa de MiBanco - Cobro C2P ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', JSON.stringify(response.headers, null, 2));
+    console.log('Data:', JSON.stringify(response.data, null, 2));
+    console.log('Config:', JSON.stringify({
+      url: response.config.url,
+      method: response.config.method,
+      headers: response.config.headers
+    }, null, 2));
+    console.log('=== Fin Respuesta Completa ===');
+    
+    if (response.data.code === '00') {
+      console.log('✅ Cobro C2P exitoso');
+      return { success: true, reference: response.data.reference, message: response.data.message };
+    } else {
+      console.log(`❌ Cobro C2P rechazado - Código: ${response.data.code}, Mensaje: ${response.data.message}`);
+      return { success: false, code: response.data.code, message: response.data.message };
+    }
+  } catch (error) {
+    console.error('Error al procesar Cobro C2P:', error.response?.data || error.message);
+    return { success: false };
+  }
+};
+
+const procesoCobroC2P = async () => {
+  try {
+    const datos = await solicitarDatosC2P();
+    console.log('\nDatos ingresados:', datos);
+    
+    const resultadoC2P = await procesarCobroC2P(datos);
+    if (resultadoC2P.success) {
+      console.log(`\n🎉 ¡Cobro C2P completado exitosamente!`);
+      console.log(`Mensaje: ${resultadoC2P.message}`);
+      console.log(`Referencia: ${resultadoC2P.reference}`);
+    } else {
+      console.log(`\n❌ Error en el proceso de Cobro C2P.`);
+      console.log(`Código de error: ${resultadoC2P.code}`);
+      console.log(`Mensaje: ${resultadoC2P.message}`);
+    }
+    rl.close();
+  } catch (error) {
+    console.error('Error en el proceso:', error);
+    rl.close();
+  }
+};
+
 const procesoDebitoInmediato = async () => {
   try {
     const datos = await solicitarDatos();
@@ -325,13 +422,16 @@ const main = async () => {
   console.log('=== Sistema R4 Conecta ===');
   console.log('1. Proceso de Débito Inmediato');
   console.log('2. Proceso de Crédito Inmediato');
-  console.log('3. Consulta de tasa BCV');
-  rl.question('Seleccione una opción (1, 2 o 3): ', async (opcion) => {
+  console.log('3. Cobro C2P');
+  console.log('4. Consulta de tasa BCV');
+  rl.question('Seleccione una opción (1, 2, 3 o 4): ', async (opcion) => {
     if (opcion.trim() === '1') {
       await procesoDebitoInmediato();
     } else if (opcion.trim() === '2') {
       await procesoCreditoInmediato();
     } else if (opcion.trim() === '3') {
+      await procesoCobroC2P();
+    } else if (opcion.trim() === '4') {
       await consultarTasaBcv();
     } else {
       console.log('Opción no válida');
