@@ -2,9 +2,36 @@ import 'dotenv/config';
 import axios from 'axios';
 import CryptoJS from 'crypto-js';
 import readline from 'readline';
+import fs from 'fs';
+import path from 'path';
 
 const BASE_URL = process.env.BASE_URL;
 const TOKEN_COMMERCE = process.env.TOKEN_COMMERCE;
+
+// Función para crear logs con timestamp
+const crearLog = (mensaje, tipo = 'INFO', datos = null) => {
+  const timestamp = new Date().toISOString();
+  const logEntry = {
+    timestamp,
+    tipo,
+    mensaje,
+    datos
+  };
+  
+  const logString = `[${timestamp}] [${tipo}] ${mensaje}${datos ? ` | Datos: ${JSON.stringify(datos)}` : ''}`;
+  console.log(logString);
+  
+  // Guardar en archivo de log
+  const logDir = './logs';
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  
+  const logFile = path.join(logDir, `credito-inmediato-${new Date().toISOString().split('T')[0]}.log`);
+  fs.appendFileSync(logFile, logString + '\n');
+  
+  return logEntry;
+};
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -119,8 +146,21 @@ const procesarDebitoInmediato = async (datos, otp) => {
 };
 
 const verificarTransaccion = async (id) => {
+  crearLog('Iniciando verificación de transacción', 'VERIFICATION', { id });
+  
   const tokenAuthorization = generateHmacSha256(id, TOKEN_COMMERCE);
+  crearLog('Token de autorización para verificación generado', 'INFO', { 
+    id, 
+    tokenAuthorization: tokenAuthorization.substring(0, 10) + '...' 
+  });
+  
   try {
+    crearLog('Enviando petición de verificación', 'API_REQUEST', {
+      url: `${BASE_URL}/ConsultarOperaciones`,
+      method: 'POST',
+      id
+    });
+    
     const response = await axios.post(`${BASE_URL}/ConsultarOperaciones`, {
       id
     }, {
@@ -130,44 +170,101 @@ const verificarTransaccion = async (id) => {
         'Commerce': TOKEN_COMMERCE
       }
     });
+    
+    crearLog('Respuesta de verificación recibida', 'API_RESPONSE', {
+      status: response.status,
+      data: response.data
+    });
+    
     if (response.data.code === 'ACCP') {
+      crearLog('Transacción verificada exitosamente', 'SUCCESS', {
+        code: response.data.code,
+        reference: response.data.reference
+      });
       return { success: true, reference: response.data.reference };
     } else {
+      crearLog('Transacción aún pendiente', 'WARNING', {
+        code: response.data.code,
+        message: response.data.message || 'Transacción en proceso'
+      });
       return { success: false, stillPending: true };
     }
   } catch (error) {
+    crearLog('Error en verificación de transacción', 'ERROR', {
+      id,
+      message: error.message,
+      responseData: error.response?.data
+    });
     return { success: false };
   }
 };
 
 const verificarTransaccionPeriodicamente = async (id, maxIntentos = 12) => {
+  crearLog('Iniciando verificación periódica de transacción', 'VERIFICATION_PERIODIC', { 
+    id, 
+    maxIntentos 
+  });
+  
   for (let intento = 1; intento <= maxIntentos; intento++) {
+    crearLog(`Intento de verificación ${intento}/${maxIntentos}`, 'VERIFICATION_ATTEMPT', { 
+      intento, 
+      maxIntentos, 
+      id 
+    });
+    
     const resultado = await verificarTransaccion(id);
     if (resultado.success) {
+      crearLog('Transacción completada exitosamente', 'SUCCESS', { 
+        intento, 
+        reference: resultado.reference 
+      });
       console.log(`✅ Transacción completada exitosamente en el intento ${intento}`);
       return resultado;
     }
+    
     if (intento < maxIntentos) {
+      crearLog('Esperando 5 segundos antes del siguiente intento', 'WAIT', { 
+        intento, 
+        tiempoEspera: 5000 
+      });
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
+  
+  crearLog('Tiempo de espera agotado para verificación periódica', 'TIMEOUT', { 
+    id, 
+    maxIntentos 
+  });
   console.log('⏰ Tiempo de espera agotado. La transacción aún está en proceso.');
   return { success: false, timeout: true };
 };
 
 const solicitarDatosCredito = () => {
   return new Promise((resolve) => {
+    crearLog('Iniciando solicitud de datos para Crédito Inmediato', 'INFO');
     console.log('\n=== Datos para Crédito Inmediato ===');
+    
     rl.question('Cédula (ej: V12345678): ', (cedula) => {
+      crearLog('Cédula ingresada', 'INPUT', { cedula: cedula.trim() });
+      
       rl.question('Cuenta (20 dígitos): ', (cuenta) => {
+        crearLog('Cuenta ingresada', 'INPUT', { cuenta: cuenta.trim() });
+        
         rl.question('Monto (ej: 10.00): ', (monto) => {
+          crearLog('Monto ingresado', 'INPUT', { monto: monto.trim() });
+          
           rl.question('Concepto (ej: Prueba 854): ', (concepto) => {
-            resolve({
+            crearLog('Concepto ingresado', 'INPUT', { concepto: concepto.trim() });
+            
+            const datosCompletos = {
               cedula: cedula.trim(),
               cuenta: cuenta.trim(),
               monto: monto.trim(),
               concepto: concepto.trim()
-            });
+            };
+            
+            crearLog('Datos completos recopilados para Crédito Inmediato', 'SUCCESS', datosCompletos);
+            resolve(datosCompletos);
           });
         });
       });
@@ -176,11 +273,29 @@ const solicitarDatosCredito = () => {
 };
 
 const procesarCreditoInmediato = async (datos) => {
+  crearLog('Iniciando procesamiento de Crédito Inmediato', 'INFO', datos);
   console.log('\n=== Procesando Crédito Inmediato ===');
+  
   const tokenData = `${datos.cedula}${datos.cuenta}${datos.monto}`;
   const tokenAuthorization = generateHmacSha256(tokenData, TOKEN_COMMERCE);
+  
+  crearLog('Token de autorización generado', 'INFO', { 
+    tokenData, 
+    tokenAuthorization: tokenAuthorization.substring(0, 10) + '...' 
+  });
 
   try {
+    crearLog('Enviando petición a la API de Crédito Inmediato', 'API_REQUEST', {
+      url: `${BASE_URL}/CICuentas`,
+      method: 'POST',
+      datos: {
+        Cedula: datos.cedula,
+        Cuenta: datos.cuenta,
+        Monto: datos.monto,
+        Concepto: datos.concepto
+      }
+    });
+    
     const response = await axios.post(`${BASE_URL}/CICuentas`, {
       Cedula: datos.cedula,
       Cuenta: datos.cuenta,
@@ -193,6 +308,13 @@ const procesarCreditoInmediato = async (datos) => {
         'Commerce': TOKEN_COMMERCE
       }
     });
+    
+    crearLog('Respuesta recibida de la API de Crédito Inmediato', 'API_RESPONSE', {
+      status: response.status,
+      statusText: response.statusText,
+      data: response.data
+    });
+    
     console.log('=== Respuesta Completa de MiBanco - Crédito Inmediato ===');
     console.log('Status:', response.status);
     console.log('Status Text:', response.statusText);
@@ -204,44 +326,94 @@ const procesarCreditoInmediato = async (datos) => {
       headers: response.config.headers
     }, null, 2));
     console.log('=== Fin Respuesta Completa ===');
+    
     if (response.data.code === 'ACCP') {
+      crearLog('Crédito Inmediato procesado exitosamente', 'SUCCESS', {
+        code: response.data.code,
+        reference: response.data.reference
+      });
       return { success: true, reference: response.data.reference };
     } else if (response.data.code === 'AC00' && response.data.id) {
+      crearLog('Crédito Inmediato requiere verificación', 'WARNING', {
+        code: response.data.code,
+        id: response.data.id
+      });
       return { success: false, id: response.data.id, needsVerification: true };
     } else {
+      crearLog('Crédito Inmediato falló', 'ERROR', {
+        code: response.data.code,
+        message: response.data.message || 'Sin mensaje específico'
+      });
       return { success: false };
     }
   } catch (error) {
+    crearLog('Error en la petición de Crédito Inmediato', 'ERROR', {
+      message: error.message,
+      responseData: error.response?.data,
+      status: error.response?.status
+    });
     console.error('Error al procesar crédito inmediato:', error.response?.data || error.message);
     return { success: false };
   }
 };
 
 const procesoCreditoInmediato = async () => {
+  crearLog('=== INICIO DEL PROCESO DE CRÉDITO INMEDIATO ===', 'PROCESS_START');
+  
   try {
+    crearLog('Solicitando datos del usuario', 'USER_INPUT_START');
     const datos = await solicitarDatosCredito();
     console.log('\nDatos ingresados:', datos);
+    crearLog('Datos del usuario recopilados exitosamente', 'USER_INPUT_SUCCESS', datos);
+    
+    crearLog('Procesando crédito inmediato con los datos proporcionados', 'PROCESSING_START');
     const resultadoCredito = await procesarCreditoInmediato(datos);
+    
     if (resultadoCredito.success) {
+      crearLog('Proceso de crédito inmediato completado exitosamente', 'PROCESS_SUCCESS', {
+        reference: resultadoCredito.reference
+      });
       console.log(`\n🎉 ¡Crédito inmediato completado exitosamente!`);
       console.log(`Referencia: ${resultadoCredito.reference}`);
+      crearLog('=== FIN DEL PROCESO DE CRÉDITO INMEDIATO - EXITOSO ===', 'PROCESS_END_SUCCESS');
       rl.close();
     } else if (resultadoCredito.needsVerification) {
+      crearLog('Proceso requiere verificación adicional', 'VERIFICATION_REQUIRED', {
+        id: resultadoCredito.id
+      });
       console.log(`\n🔄 La transacción requiere verificación. ID: ${resultadoCredito.id}`);
+      
+      crearLog('Iniciando proceso de verificación periódica', 'VERIFICATION_PROCESS_START');
       const resultadoVerificacion = await verificarTransaccionPeriodicamente(resultadoCredito.id);
+      
       if (resultadoVerificacion.success) {
+        crearLog('Verificación completada exitosamente', 'VERIFICATION_SUCCESS', {
+          reference: resultadoVerificacion.reference
+        });
         console.log(`\n🎉 ¡Crédito inmediato verificado y completado!`);
         console.log(`Referencia: ${resultadoVerificacion.reference}`);
+        crearLog('=== FIN DEL PROCESO DE CRÉDITO INMEDIATO - VERIFICADO ===', 'PROCESS_END_SUCCESS');
       } else {
+        crearLog('Verificación agotó tiempo de espera', 'VERIFICATION_TIMEOUT', {
+          id: resultadoCredito.id
+        });
         console.log('\n⏰ La transacción aún está en proceso después del tiempo de espera.');
+        crearLog('=== FIN DEL PROCESO DE CRÉDITO INMEDIATO - TIMEOUT ===', 'PROCESS_END_TIMEOUT');
       }
       rl.close();
     } else {
+      crearLog('Proceso de crédito inmediato falló', 'PROCESS_FAILED');
       console.log('\n❌ Error en el proceso de crédito inmediato.');
+      crearLog('=== FIN DEL PROCESO DE CRÉDITO INMEDIATO - FALLIDO ===', 'PROCESS_END_FAILED');
       rl.close();
     }
   } catch (error) {
+    crearLog('Error inesperado en el proceso de crédito inmediato', 'PROCESS_ERROR', {
+      message: error.message,
+      stack: error.stack
+    });
     console.error('Error en el proceso:', error);
+    crearLog('=== FIN DEL PROCESO DE CRÉDITO INMEDIATO - ERROR ===', 'PROCESS_END_ERROR');
     rl.close();
   }
 };
